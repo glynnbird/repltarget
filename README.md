@@ -74,7 +74,16 @@ The project responds to the following API calls:
 - `PUT /db/id` - accepts single document writes and emits events
 - `POST /db/_ensure_full_commit` - simulates success
 
-By default, the checkpoint documents are always discarded on save and are found to be absent on fetch....(PLUGIN REQUIRED)
+By default, the checkpoint documents are always discarded on save and are found to be absent on fetch. 
+You may choose a couple of other options:
+
+- 'file' plugin - store checkpoint documents to disk
+- 'ram' plugin - store checkpoint documents in memory
+- 'devnull' plugin - the default behaviour
+
+Provide a `plugin` key on startup e.g.
+
+    var r = repltarget({port: 3000, username: 'username', password: 'password', plugin: 'file'});
 
 ## Debugging
 

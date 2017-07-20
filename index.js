@@ -1,15 +1,26 @@
-module.exports = function(port, username, password) {
+// debug output
+const debug = require('debug')('repltarget');
+const path = require('path');
+
+
+module.exports = function(opts) {
 
   // express app
   const app = require('express')();
-
-  // debug output
-  const debug = require('debug')('repltarget');
 
   // event emitter
   const EventEmitter = new require('events');
   class ReplEmitter extends EventEmitter {}
   const ee = new ReplEmitter();
+
+  // load the checkpoint plugin
+  if (!opts.plugin) {
+    opts.plugin = 'ram'
+  }
+  if (opts.plugin.match(/[^a-z]/)) { 
+    throw new Error('invalid plugin name');
+  }
+  const checkpoint = require(path.join(__dirname, 'plugins', opts.plugin));
 
   // parse document bodies
   app.use(require('body-parser').json({limit: '64mb'}))
@@ -45,14 +56,25 @@ module.exports = function(port, username, password) {
     res.send(obj);
   });
 
-  // tell CouchDB that you have no checkpoint documents
+  // fetch checkpoint
   app.get('/:dbname/_local/:id', function(req, res) {
-    res.status(404).send({ error: 'not_found', reason: 'missing'});
+    checkpoint.read(req.params.dbname, req.params.id, function(err, data) {
+      if (data) {
+        // if we have data, return it
+        res.send(JSON.stringify(data)+'\n');
+      } else {
+        // otherwise say it's missing
+        res.status(404).send({ error: 'not_found', reason: 'missing'}); 
+      }
+    });
   });
 
-  // gladly accept checkpoint documents, then quietly discard them
+  // write checkpoint data
   app.put('/:dbname/_local/:id', function(req, res) {
-    res.send({ ok: true, id: '_local/' + req.params.id, rev: '0-1' });
+    checkpoint.write(req.params.dbname, req.params.id, req.body, function(err, data) {
+      // always make it look like we saved it ok
+      res.status(201).send({ ok: true, id: '_local/' + req.params.id, rev: data._rev? data._rev : '0-1' });
+    });
   });
 
   // if asked for "revs diff" analysis, reply that you need all the docs
@@ -68,14 +90,15 @@ module.exports = function(port, username, password) {
 
   // accept incoming bulk document writes
   app.post('/:dbname/_bulk_docs', function(req, res) {
-    var retval = [];
+  //  var retval = [];
     for (var i in req.body.docs) {
-      retval.push({ ok: true, id: req.body.docs[i]._id, rev: req.body.docs[i]._rev });
+  //    retval.push({ ok: true, id: req.body.docs[i]._id, rev: req.body.docs[i]._rev });
       delete req.body.docs[i]._revisions;
       ee.emit('doc', req.body.docs[i]);
     }
     ee.emit('batch', req.body.docs);
-    res.status(201).send(retval);
+  //  console.log(retval);
+    res.status(201).send([]);
   });
 
   // and single document writes
@@ -91,10 +114,15 @@ module.exports = function(port, username, password) {
     res.status(201).send({ok: true, instance_start_time: '0'});
   });
 
-  // listen on port 3000
-  app.listen(port, function () {
-    debug('repltarget running on port ' + port)
-    ee.emit('startup', { port: port });
+  // listen on port
+  checkpoint.init(opts, function(err, data) {
+    if (!opts.port) {
+      opts.port = 3000;
+    }
+    app.listen(opts.port, function () {
+      debug('repltarget running on port ' + opts.port)
+      ee.emit('startup', { port: opts.port, plugin: opts.plugin });
+    });
   });
 
   return ee;
